@@ -1,7 +1,7 @@
 import argparse
 import logging
 import configparser
-from dataset import bench_dataset
+from deepio import bench_dataset
 
 
 logging.basicConfig(format='[%(levelname)s]\t: %(message)s',
@@ -19,7 +19,7 @@ def main():
 
     config = configparser.ConfigParser()
     config.read(args.config_path)
-    logging.info("Read in config file.")
+    logging.info(f"Read in config file from {args.config_path}.")
     for section_name in config.sections():
         bench_dataset(section_name, config[section_name])
 

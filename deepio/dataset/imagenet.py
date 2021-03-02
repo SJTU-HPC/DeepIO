@@ -1,18 +1,18 @@
 import time
-import os
-from functools import partial
+import logging
+from multiprocessing import Process, Manager
 
 import numpy as np
 
 import torch
 import torchvision
 import torchvision.transforms as transforms
-from torch.multiprocessing import Process
 
-from .multiproc import init_process
+from ..multiproc import init_process
+from ..report import PerfRecord
 
 
-def imagenet_main(config):
+def imagenet_main(config, return_dict):
 
     dataset_path = config["path"]
     batch_size = config.getint("batch_size")
@@ -43,37 +43,45 @@ def imagenet_main(config):
     num_samples = 0
 
     torch.distributed.barrier()
-    start_ts = time.time()
-    end_ts = time.time()
+    timestamp = time.time()
     total_time = 0
     for i, data in enumerate(trainloader):
         inputs, labels = data
         torch.distributed.barrier()
         if i > 5:
             num_samples += inputs.size(0)
-            total_time += time.time() - end_ts
+            total_time += time.time() - timestamp
         if i > bench_iter:
             break
-        end_ts = time.time()
+        timestamp = time.time()
 
-    samples_per_second = torch.FloatTensor([num_samples / total_time])
+    samples_per_second_ = torch.FloatTensor([num_samples / total_time])
 
-    torch.distributed.all_reduce(samples_per_second)
+    torch.distributed.all_reduce(samples_per_second_)
 
     if torch.distributed.get_rank() == 0:
-        print(samples_per_second)
+        return_dict[0] = samples_per_second_.item()
 
 
 def bench_imagenet(config):
     if not config.getboolean('enable'):
         return
+
+    logging.info("Start benchmark of ImageNet.")
+
+    manager = Manager()
+    return_dict = manager.dict()
+
     world_size = config.getint("multi_proc")
     processes = []
     for rank in range(world_size):
         p = Process(target=init_process,
-                    args=(rank, world_size, config, imagenet_main))
+                    args=(rank, world_size, config, return_dict,
+                          imagenet_main))
         p.start()
         processes.append(p)
 
     for p in processes:
         p.join()
+
+    PerfRecord.add_item("ImageNet", return_dict.values()[0])
